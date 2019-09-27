@@ -1,2 +1,2 @@
-# cross-section-viewer
+# ipysliceviewer
 An IPyWidget for viewing cross-sections of objects
