@@ -1,0 +1,5 @@
+{
+  "load_extensions": {
+    "ipysliceviewer/extension": true
+  }
+}
