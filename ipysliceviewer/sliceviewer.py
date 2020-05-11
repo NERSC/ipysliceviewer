@@ -1,7 +1,7 @@
 # Standard lib
 import os
+import logging
 # Third party
-from PIL import Image
 from bqplot import (
     LinearScale, Figure, PanZoom,
     Toolbar, Image as BQImage,
@@ -43,254 +43,276 @@ class SliceViewer(VBox):
         enhancement_steps=1000,
         **kwargs
     ):
+        self.logger = logging.Logger(name="SliceViewer")
+
         def on_chosen_path_change(old_path, new_path):
-            self.dataset = FolderDataset(new_path)
+            try:
+                if os.path.isdir(new_path):
+                    self.dataset = FolderDataset(new_path)
+                elif os.path.isfile(new_path):
+                    self.dataset = VolumeDataset(new_path)
+            except Exception as e:
+                self.logger.exception(e)
+
             # TODO: If the path doesn't contain images, display a warning
 
-        # A widget for changing the image folder
-        self.pathchooser = PathChooser(
-            chosen_path_desc='Image folder:',
-            default_directory=default_directory,
-            on_chosen_path_change=on_chosen_path_change,
-        )
-        self.pathchooser.layout.margin = '0 0 10px 0'
-
-        # The number of increments of the min/max slider
-        self.enhancement_steps = enhancement_steps
-
-        self.scales = {
-            'x': LinearScale(),
-            'y': LinearScale(),
-        }
-
-        # The currently displayed image will be in bytes at `self.image_plot.image.value`
-        self.image_plot = BQImage(
-            image=IPyImage(),
-            scales=self.scales,
-        )
-
-        self.figure = Figure(
-            marks=[self.image_plot],
-            padding_x=0,
-            padding_y=0,
-            animation_duration=1000,
-            fig_margin={
-                'top': 0,
-                'right': 0,
-                'bottom': 0,
-                'left': 0,
-            },
-            layout=Layout(
-                grid_area='figure',
-                margin='0',
-                width='320px',
-                height='320px',
-            ),
-        )
-
-        # Custom toolbar
-        toolbar_width = '100%'
-        toolbar_margin = '0px 0 2px 0'
-        self.pan_zoom = PanZoom(
-            scales={
-                'x': [self.scales['x']],
-                'y': [self.scales['y']],
-            },
-        )
-
-        self.save_button = Button(
-            description='Save Image',
-            tooltip='Save Image',
-            icon='save',
-            layout=Layout(
-                width=toolbar_width,
-                # flex='1 1 auto',
-                margin=toolbar_margin,
-            ),
-        )
-        self.save_button.on_click(self.save_current_image)
-
-        self.hide_button = Button(
-            description='Hide Image',
-            tooltip='Hide Image',
-            icon='eye-slash',
-            layout=Layout(
-                width=toolbar_width,
-                # flex='1 1 auto',
-                margin=toolbar_margin,
+        try:
+            # A widget for changing the image folder
+            self.pathchooser = PathChooser(
+                chosen_path_desc='Image folder:',
+                default_directory=default_directory,
+                on_chosen_path_change=on_chosen_path_change,
             )
-        )
-        self.hide_button.on_click(self.hide_current_image)
+            self.pathchooser.layout.margin = '0 0 10px 0'
 
-        self.pan_zoom_toggle_button = ToggleButton(
-            description='Pan / Zoom',
-            tooltip='Pan/Zoom',
-            icon='arrows',
-            layout=Layout(
-                width=toolbar_width,
-                # flex='1 1 auto',
-                margin=toolbar_margin,
-            ),
-        )
-        self.pan_zoom_toggle_button.observe(self.on_pan_zoom_toggle, names='value')
+            # The number of increments of the min/max slider
+            self.enhancement_steps = enhancement_steps
 
-        self.reset_pan_zoom_button = Button(
-            description='Undo Zoom',
-            tooltip='Reset pan/zoom',
-            icon='refresh',
-            layout=Layout(
-                width=toolbar_width,
-                # flex='1 1 auto',
-                margin=toolbar_margin,
-            ),
-        )
-        self.reset_pan_zoom_button.on_click(self.reset_pan_zoom)
+            self.scales = {
+                'x': LinearScale(),
+                'y': LinearScale(),
+            }
 
-        self.reset_enhancements_button = Button(
-            description='Un-Enhance',
-            tooltip='Reset enhancements',
-            icon='ban',
-            layout=Layout(
-                width=toolbar_width,
-                # flex='1 1 auto',
-                margin=toolbar_margin,
-            ),
-        )
-        self.reset_enhancements_button.on_click(self.reset_enhancements)
-
-        self.mini_map = IPyImage(layout=Layout(
-            grid_area='mini-map',
-            margin='0',
-        ))
-        self.mini_map.width = 180
-        self.mini_map.height = 180
-        # PERFORMANCE CONCERN
-        # Ideally instead of four observations, this would observe 'scales' on `self.pan_zoom`
-        # However, it doesn't fire updates
-        # Ref: https://github.com/bloomberg/bqplot/issues/800
-        self.image_plot.scales['x'].observe(self.on_pan_zoom_change('x_min'), names='min')
-        self.image_plot.scales['x'].observe(self.on_pan_zoom_change('x_max'), names='max')
-        self.image_plot.scales['y'].observe(self.on_pan_zoom_change('y_min'), names='min')
-        self.image_plot.scales['y'].observe(self.on_pan_zoom_change('y_max'), names='max')
-
-        self.plane_toggle = ToggleButtons(
-            options=['yz', 'xz', 'xy'],
-            description='',
-            disabled=False,
-            button_style='',
-            tooltips=['Step in x direction', 'Step in y direction', 'Step in z direction'],
-            layout=Layout(
-                width='200px',
-                # flex='1 1 auto',
-                margin='7px 0 auto auto',
-            ),
-        )
-        self.plane_toggle.style.button_width = 'auto'
-        self.plane_toggle.observe(self.on_plane_change, names='value')
-
-        self.toolbar = VBox(
-            children = [
-                self.save_button,
-                self.hide_button,
-                self.pan_zoom_toggle_button,
-                self.reset_pan_zoom_button,
-                self.reset_enhancements_button,
-            ],
-            layout=Layout(
-                grid_area='toolbar',
-                margin='0',
-            ),
-        )
-
-        # Image enhancements
-        self.min_max_slider = FloatRangeSlider(
-            value=[0, 255],
-            min=0,
-            max=255,
-            step=255 / self.enhancement_steps,
-            description='Min/Max:',
-            orientation='horizontal',
-            readout=True,
-            readout_format='.1f',
-            continuous_update=True,
-            layout=Layout(
-                grid_area='min-max-slider',
-                margin='10px 0 10px -10px',
-                width='100%',
-            ),
-        )
-        self.min_max_slider.observe(self.on_min_max_change, names='value')
-
-        self.index_slider = IntSlider(
-            value=0,
-            min=0,
-            max=1,
-            step=1,
-            description='Index:',
-            orientation='horizontal',
-            readout=True,
-            readout_format='d',
-            continuous_update=True,
-            layout=Layout(
-                grid_area='index-slider',
-                margin='8px -20px 10px -36px',
-                width='100%',
-            ),
-        )
-        self.index_slider.observe(self.on_image_index_change, names='value')
-
-        # Animation
-        self.play = Play(
-            value=self.index_slider.value,
-            min=self.index_slider.min,
-            max=self.index_slider.max,
-            step=self.index_slider.step,
-        )
-        jslink((self.play, 'value'), (self.index_slider, 'value'))
-        # Keep 'max' in sync as well
-        self.index_slider.observe(self.on_index_slider_max_change, names='max')
-
-        self.bottom_bar = HBox(
-            children=[
-                self.play,
-                self.index_slider,
-                self.plane_toggle,
-            ],
-            layout=Layout(
-               grid_area='bottom-bar',
-               margin=f'10px -20px 0 0',
-               # overflow='hidden',
+            # The currently displayed image will be in bytes at `self.image_plot.image.value`
+            self.image_plot = BQImage(
+                image=IPyImage(),
+                scales=self.scales,
             )
-        )
 
-        # Layout
-        self.gridbox = GridBox(
-            children=[
-                self.figure,
-                self.toolbar,
-                self.mini_map,
-                self.min_max_slider,
-                self.bottom_bar,
-            ],
-        )
-        # Initially hidden without data
-        self.gridbox.layout.display = 'none'
+            self.figure = Figure(
+                marks=[self.image_plot],
+                padding_x=0,
+                padding_y=0,
+                animation_duration=1000,
+                fig_margin={
+                    'top': 0,
+                    'right': 0,
+                    'bottom': 0,
+                    'left': 0,
+                },
+                layout=Layout(
+                    grid_area='figure',
+                    margin='0',
+                    width='320px',
+                    height='320px',
+                ),
+            )
 
-        self._dataset = None
-        if volume is not None:
-            self.dataset = VolumeDataset(volume)
-            # Hide pathchooser when using a volume
-            self.pathchooser.layout.display = 'none'
+            # Custom toolbar
+            toolbar_width = '100%'
+            toolbar_margin = '0px 0 2px 0'
+            self.pan_zoom = PanZoom(
+                scales={
+                    'x': [self.scales['x']],
+                    'y': [self.scales['y']],
+                },
+            )
 
-        # Call VBox super class __init__
-        super().__init__(
-            children=[
-                self.pathchooser,
-                self.gridbox,
-            ],
-            layout=Layout(width='auto'),
-            **kwargs,
-        )
+            self.save_button = Button(
+                description='Save Image',
+                tooltip='Save Image',
+                icon='save',
+                layout=Layout(
+                    width=toolbar_width,
+                    # flex='1 1 auto',
+                    margin=toolbar_margin,
+                ),
+            )
+            self.save_button.on_click(self.save_current_image)
+
+            self.hide_button = Button(
+                description='Hide Image',
+                tooltip='Hide Image',
+                icon='eye-slash',
+                layout=Layout(
+                    width=toolbar_width,
+                    # flex='1 1 auto',
+                    margin=toolbar_margin,
+                )
+            )
+            self.hide_button.on_click(self.hide_current_image)
+
+            self.pan_zoom_toggle_button = ToggleButton(
+                description='Pan / Zoom',
+                tooltip='Pan/Zoom',
+                icon='arrows',
+                layout=Layout(
+                    width=toolbar_width,
+                    # flex='1 1 auto',
+                    margin=toolbar_margin,
+                ),
+            )
+            self.pan_zoom_toggle_button.observe(self.on_pan_zoom_toggle, names='value')
+
+            self.reset_pan_zoom_button = Button(
+                description='Undo Zoom',
+                tooltip='Reset pan/zoom',
+                icon='refresh',
+                layout=Layout(
+                    width=toolbar_width,
+                    # flex='1 1 auto',
+                    margin=toolbar_margin,
+                ),
+            )
+            self.reset_pan_zoom_button.on_click(self.reset_pan_zoom)
+
+            self.reset_enhancements_button = Button(
+                description='Un-Enhance',
+                tooltip='Reset enhancements',
+                icon='ban',
+                layout=Layout(
+                    width=toolbar_width,
+                    # flex='1 1 auto',
+                    margin=toolbar_margin,
+                ),
+            )
+            self.reset_enhancements_button.on_click(self.reset_enhancements)
+
+            self.mini_map = IPyImage(layout=Layout(
+                grid_area='mini-map',
+                margin='0',
+            ))
+            self.mini_map.width = 180
+            self.mini_map.height = 180
+            # PERFORMANCE CONCERN
+            # Ideally instead of four observations, this would observe 'scales' on `self.pan_zoom`
+            # However, it doesn't fire updates
+            # Ref: https://github.com/bloomberg/bqplot/issues/800
+            self.image_plot.scales['x'].observe(self.on_pan_zoom_change('x_min'), names='min')
+            self.image_plot.scales['x'].observe(self.on_pan_zoom_change('x_max'), names='max')
+            self.image_plot.scales['y'].observe(self.on_pan_zoom_change('y_min'), names='min')
+            self.image_plot.scales['y'].observe(self.on_pan_zoom_change('y_max'), names='max')
+
+            self.plane_toggle = ToggleButtons(
+                options=['yz', 'xz', 'xy'],
+                description='',
+                disabled=False,
+                button_style='',
+                tooltips=['Step in x direction', 'Step in y direction', 'Step in z direction'],
+                layout=Layout(
+                    width='200px',
+                    # flex='1 1 auto',
+                    margin='7px 0 auto auto',
+                ),
+            )
+            self.plane_toggle.style.button_width = 'auto'
+            self.plane_toggle.observe(self.on_plane_change, names='value')
+
+            self.toolbar = VBox(
+                children = [
+                    self.save_button,
+                    self.hide_button,
+                    self.pan_zoom_toggle_button,
+                    self.reset_pan_zoom_button,
+                    self.reset_enhancements_button,
+                ],
+                layout=Layout(
+                    grid_area='toolbar',
+                    margin='0',
+                ),
+            )
+
+            # Image enhancements
+            self.min_max_slider = FloatRangeSlider(
+                value=[0, 255],
+                min=0,
+                max=255,
+                step=255 / self.enhancement_steps,
+                description='Min/Max:',
+                orientation='horizontal',
+                readout=True,
+                readout_format='.1f',
+                continuous_update=True,
+                layout=Layout(
+                    grid_area='min-max-slider',
+                    margin='10px 0 10px -10px',
+                    width='100%',
+                ),
+            )
+            self.min_max_slider.observe(self.on_min_max_change, names='value')
+
+            self.index_slider = IntSlider(
+                value=0,
+                min=0,
+                max=1,
+                step=1,
+                description='Index:',
+                orientation='horizontal',
+                readout=True,
+                readout_format='d',
+                continuous_update=True,
+                layout=Layout(
+                    grid_area='index-slider',
+                    margin='8px -20px 10px -36px',
+                    width='100%',
+                ),
+            )
+            self.index_slider.observe(self.on_image_index_change, names='value')
+
+            # Animation
+            self.play = Play(
+                value=self.index_slider.value,
+                min=self.index_slider.min,
+                max=self.index_slider.max,
+                step=self.index_slider.step,
+            )
+            jslink((self.play, 'value'), (self.index_slider, 'value'))
+            # Keep 'max' in sync as well
+            self.index_slider.observe(self.on_index_slider_max_change, names='max')
+
+            self.bottom_bar = HBox(
+                children=[
+                    self.play,
+                    self.index_slider,
+                    self.plane_toggle,
+                ],
+                layout=Layout(
+                   grid_area='bottom-bar',
+                   margin=f'10px -20px 0 0',
+                   # overflow='hidden',
+                )
+            )
+
+            # Layout
+            self.gridbox = GridBox(
+                children=[
+                    self.figure,
+                    self.toolbar,
+                    self.mini_map,
+                    self.min_max_slider,
+                    self.bottom_bar,
+                ],
+                #layout=Layout(width='auto')
+            )
+            # Initially hidden without data
+            #self.gridbox.layout.display = 'none'
+
+            # Call VBox super class __init__
+            super().__init__(
+                children=[
+                    self.pathchooser,
+                    self.gridbox,
+                ],
+                layout=Layout(width='auto'),
+                **kwargs,
+            )
+
+            self._dataset = None
+            if volume is not None:
+                try:
+                    self.dataset = VolumeDataset(volume)
+                    # Hide pathchooser when using a volume
+                    #self.pathchooser.layout.display = 'none'
+                except Exception as e:
+                    self.logger.exception(e)
+            else:
+                try:
+                    self._dataset = FolderDataset(default_directory)
+                    self.pathchooser.chosen_path = default_directory
+                except Exception as e:
+                    self.logger.exception(e)
+        except Exception as e:
+            self.logger.exception(e)
 
     @property
     def dataset(self):

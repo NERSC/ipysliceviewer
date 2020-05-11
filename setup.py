@@ -140,6 +140,8 @@ setup_args = {
     ],
     'install_requires': [
         'ipywidgets>=7.0.0',
+        'bqplot==0.11.9',
+        'pillow>=7'
     ],
     'packages': find_packages(),
     'zip_safe': False,

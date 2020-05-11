@@ -1,5 +1,6 @@
 # Standard lib
 import os
+import imghdr
 # Third Party
 import numpy as np
 # Local
@@ -21,9 +22,18 @@ class Dataset():
 
 class FolderDataset(Dataset):
     def __init__(self, directory):
+        if not os.path.exists(directory) or not os.path.isdir(directory):
+            raise IOError(f"Not a valid directory: {directory}")
+
         self.directory = directory
-        self.image_types = ['.png', '.jpg', 'jpeg']
-        images = filter(lambda f: f[-4:] in self.image_types, os.listdir(directory))
+
+        images = []
+        for fname in os.listdir(directory):
+            fpath = os.path.join(directory, fname)
+            if os.path.isdir(fpath):
+                continue
+            if imghdr.what(fpath) is not None:
+                images.append(fname)
         self.image_names = sorted(images)
 
     def __len__(self):
@@ -43,6 +53,9 @@ class FolderDataset(Dataset):
 
 class VolumeDataset(Dataset):
     def __init__(self, volume):
+        if not isinstance(volume, np.ndarray):
+            raise TypeError("Not a numpy array: {}".format(volume))
+
         self.max = np.max(volume)
         self.min = np.min(volume)
         self.volume = normalize(volume)
